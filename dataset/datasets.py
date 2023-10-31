@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 import os
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 import pickle
 import PIL.Image as PIL_Image
 from PIL.Image import Image
@@ -15,9 +15,14 @@ from torchvision.models.detection import (
     ssdlite320_mobilenet_v3_large,
 )
 from models.yolo import Model
-
+from tqdm import tqdm
 from utils.data_utils import load_and_clean_data, get_cropped_image
-from utils.model_utils import generate_face_bbox, generate_keypoints
+from utils.model_utils import (
+    generate_face_bbox,
+    generate_keypoints,
+    generate_person_bboxes,
+)
+import datetime
 
 
 class GenericDataset(Dataset):
@@ -25,11 +30,12 @@ class GenericDataset(Dataset):
         self,
         annotation_csv: str,
         data_folder: str,
-        preprocess_feats: bool = False,
-        preprocessed_feat_path: str = None,
-        model_device: str = "cpu",
-        yolo_model_path: str = "model_weights/pretrained/yolov5n-face_new.pt",
-        yolo_model_cfg: str = "models/yolov5n.yaml",
+        yolo_model_path: str,
+        yolo_model_cfg: str,
+        preprocess_feats: bool,
+        preprocessed_feat_path: Optional[bool],
+        split: str,
+        model_device: str,
     ):
         super(Dataset, self).__init__()
         # Init class vars
@@ -37,6 +43,7 @@ class GenericDataset(Dataset):
         self.preprocess_feats = preprocess_feats
         self.preprocess_feat_path = preprocessed_feat_path
         self.data_folder = data_folder
+        self.split = split
 
         # Get annotation data ready in unprocessed form
         self.dataset = load_and_clean_data(
@@ -56,25 +63,51 @@ class GenericDataset(Dataset):
         self.face_detector.eval()
         self.face_detector.to(self.model_device)
 
+        # Initialize SSD person detector
+        self.person_detector = ssdlite320_mobilenet_v3_large(
+            weights=SSDLite320_MobileNet_V3_Large_Weights.DEFAULT
+        )
+        self.person_detector.eval()
+        self.person_detector.to(self.model_device)
         self.tensor_transforms = v2.Compose(
             [v2.PILToTensor(), v2.ToDtype(torch.float32, scale=True)]
         )
 
     @staticmethod
-    def get_poi_from_img_path(record: dict) -> Image:
+    def get_roi_from_img_path(record: dict) -> Image:
         poi_bbox = record["BBox"]
         poi_image = get_cropped_image(record["img_path"], poi_bbox)
         return poi_image
 
-    def get_face_tensor_from_img_path(self, full_image: Image) -> torch.Tensor:
-        face_bbox = generate_face_bbox(
-            self.face_detector, full_image, self.tensor_transforms
+    def get_person_images_from_roi(self, full_image: Image) -> List[Image]:
+        people_bboxes = generate_person_bboxes(
+            self.person_detector, full_image, self.tensor_transforms, self.model_device
         )
+        if not people_bboxes:
+            return [full_image]
+        people_images = [
+            get_cropped_image(full_image, person_bbox) for person_bbox in people_bboxes
+        ]
+        return people_images
+
+    def get_face_tensor_from_img(self, full_image: Image) -> Optional[torch.Tensor]:
+        face_bbox = generate_face_bbox(
+            self.face_detector, full_image, self.tensor_transforms, self.model_device
+        )
+        if len(face_bbox) == 0:
+            return None
         face_image = get_cropped_image(full_image, face_bbox)
         return self.tensor_transforms(face_image)
 
     def __len__(self):
         return len(self.dataset)
+
+    def save_preprocessed(self):
+        save_path = os.path.join(
+            data_folder, "preprocessed_feats", f"{self.split}_{datetime.date.today()}"
+        )
+        with open(save_path, "wb") as save_file:
+            pickle.dump(self.dataset, save_file)
 
 
 class KeyPointDataset(GenericDataset):
@@ -82,21 +115,23 @@ class KeyPointDataset(GenericDataset):
         self,
         annotation_csv: str,
         data_folder: str,
-        preprocess_feats: bool = False,
-        preprocessed_feat_path: str = None,
-        model_device: str = "cpu",
         yolo_model_path: str = "model_weights/pretrained/yolov5n-face_new.pt",
         yolo_model_cfg: str = "models/yolov5n.yaml",
+        preprocess_feats: bool = False,
+        preprocessed_feat_path: str = None,
+        split: str = "train",
+        model_device: str = "cpu",
         keypoint_detect_threshold: float = 0.9,
     ):
         super().__init__(
             annotation_csv,
             data_folder,
-            preprocess_feats,
-            preprocessed_feat_path,
-            model_device,
             yolo_model_path,
             yolo_model_cfg,
+            preprocess_feats,
+            preprocessed_feat_path,
+            split,
+            model_device,
         )
         self.keypoint_detect_threshold = keypoint_detect_threshold
         # Initialize feature extractor 2 -> keypoint extraction
@@ -108,35 +143,131 @@ class KeyPointDataset(GenericDataset):
 
         if self.preprocess_feats and self.preprocess_feat_path is None:
             self.dataset = self.preprocess()
+            self.save_preprocessed()
 
     def preprocess(self) -> List[dict]:
-        for record in self.dataset:
-            poi_image = self.get_poi_from_img_path(record)
+        new_dataset = []
+        for record in tqdm(self.dataset):
+            roi_image = self.get_roi_from_img_path(record)
+            person_images = self.get_person_images_from_roi(roi_image)
             # Get Image Tensor of Face
-            record["face_tensor"] = self.get_face_tensor_from_img_path(poi_image)
-            # Get
-            record["keypoints"] = generate_keypoints(
-                self.keypoint_model,
-                poi_image,
-                self.tensor_transforms,
-                detect_threshold=self.keypoint_detect_threshold,
-            )
-        return self.dataset
+            for poi_image in person_images:
+                new_record = {
+                    "face_tensor": self.get_face_tensor_from_img(poi_image),
+                    "keypoints": generate_keypoints(
+                        self.keypoint_model,
+                        poi_image,
+                        self.tensor_transforms,
+                        self.model_device,
+                        detect_threshold=self.keypoint_detect_threshold,
+                    )[0],
+                    "labels": torch.Tensor(record["Continuous_Labels"]),
+                }
+                if new_record["face_tensor"] is None:
+                    continue
+                # Get Keypoints
+                new_dataset.append(new_record)
+        return new_dataset
 
     def __getitem__(self, idx):
         record = self.dataset[idx]
-        labels = torch.Tensor(record["Continuous_Labels"])
+
         if self.preprocess_feats:
+            labels = record["labels"]
             face_img_tensor = record["face_tensor"]
             keypoint_tensor = record["keypoints"]
         else:
-            poi_image = self.get_poi_from_img_path(record)
-            face_img_tensor = self.get_face_tensor_from_img_path(poi_image)
+            labels = torch.Tensor(record["Continuous_Labels"])
+            roi_image = self.get_roi_from_img_path(record)
+            person_images = self.get_person_images_from_roi(roi_image)
+            poi_image = person_images[0]
+            face_img_tensor = self.get_face_tensor_from_img(poi_image)
             keypoint_tensor = generate_keypoints(
                 self.keypoint_model,
                 poi_image,
                 self.tensor_transforms,
+                self.model_device,
                 detect_threshold=self.keypoint_detect_threshold,
             )
         return face_img_tensor, keypoint_tensor, labels
 
+
+class FullImageDataset(GenericDataset):
+    def __init__(
+        self,
+        annotation_csv: str,
+        data_folder: str,
+        yolo_model_path: str = "model_weights/pretrained/yolov5n-face_new.pt",
+        yolo_model_cfg: str = "models/yolov5n.yaml",
+        preprocess_feats: bool = False,
+        preprocessed_feat_path: str = None,
+        split: str = "train",
+        model_device: str = "cpu",
+    ):
+        super().__init__(
+            annotation_csv,
+            data_folder,
+            yolo_model_path,
+            yolo_model_cfg,
+            preprocess_feats,
+            preprocessed_feat_path,
+            split,
+            model_device,
+        )
+        if self.preprocess_feats and self.preprocess_feat_path is None:
+            self.dataset = self.preprocess()
+            self.save_preprocessed()
+
+    def get_full_img_tensor(self, image: Image):
+        return self.tensor_transforms(image)
+
+    def preprocess(self) -> List[dict]:
+        new_dataset = []
+        for record in tqdm(self.dataset):
+            roi_image = self.get_roi_from_img_path(record)
+            person_images = self.get_person_images_from_roi(roi_image)
+            for poi_image in person_images:
+                new_record = {
+                    "full_tensor": self.get_full_img_tensor(
+                        poi_image
+                    ),  # Get tensor of full
+                    "face_tensor": self.get_face_tensor_from_img(
+                        poi_image
+                    ),  # Get Image Tensor of Face
+                    "labels": torch.Tensor(record["Continuous_Labels"]),
+                }
+                new_dataset.append(new_record)
+
+        return new_dataset
+
+    def __getitem__(self, idx):
+        record = self.dataset[idx]
+
+        if self.preprocess_feats:
+            labels = record["labels"]
+            face_img_tensor = record["face_tensor"]
+            full_img_tensor = record["full_tensor"]
+        else:
+            labels = torch.Tensor(record["Continuous_Labels"])
+            roi_image = self.get_roi_from_img_path(record)
+            person_images = self.get_person_images_from_roi(roi_image)
+            poi_image = person_images[0]
+            face_img_tensor = self.get_face_tensor_from_img(poi_image)
+            full_img_tensor = self.get_face_tensor_from_img(poi_image)
+        return face_img_tensor, full_img_tensor, labels
+
+
+if __name__ == "__main__":
+    annotation_csv = "../emotic/emotic_pre/train.csv"
+    data_folder = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/emotic"
+    yolo_config_full = (
+        "/Users/navaneethanvaikunthan/Documents/emotic-classifier/models/yolov5n.yaml"
+    )
+    yolo_weights = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/model_weights/pretrained/yolov5n-face_new.pt"
+    train_dataset = KeyPointDataset(
+        annotation_csv=annotation_csv,
+        data_folder=data_folder,
+        preprocess_feats=True,
+        yolo_model_cfg=yolo_config_full,
+        yolo_model_path=yolo_weights,
+    )

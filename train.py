@@ -65,10 +65,10 @@ if __name__ == "__main__":
 
     to_input = v2.Compose([v2.PILToTensor(), v2.ToDtype(torch.float32, scale=True)])
     to_img_tens = v2.PILToTensor()
-    # model = ssdlite320_mobilenet_v3_large(
-    #    weights=SSDLite320_MobileNet_V3_Large_Weights.DEFAULT
-    # )
-    model = keypointrcnn_resnet50_fpn(weights=KeypointRCNN_ResNet50_FPN_Weights.DEFAULT)
+    model = ssdlite320_mobilenet_v3_large(
+        weights=SSDLite320_MobileNet_V3_Large_Weights.DEFAULT
+    )
+    # model = keypointrcnn_resnet50_fpn(weights=KeypointRCNN_ResNet50_FPN_Weights.DEFAULT)
     # model = Model(cfg="models/yolov5n.yaml")
     # model.load_state_dict(torch.load("model_weights/pretrained/yolov5n-face_new.pt", map_location=torch.device('cpu')))
     connect_skeleton = [
@@ -94,27 +94,32 @@ if __name__ == "__main__":
 
             # img_tensor_float = to_input(new_img_size).unsqueeze(0)
             output = model(img_tensor_float)
-            # bxs = output[0]["boxes"]
+            bxs = output[0]["boxes"]
 
             # preds = post_process_yolo_preds(output, curr_image)
             # res = draw_bounding_boxes(img_tensor, torch.tensor(preds))
             scores = output[0]["scores"]
-            kpts = output[0]["keypoints"]
+            # kpts = output[0]["keypoints"]
 
-            detect_threshold = 0.9
+            detect_threshold = 0.5
             idx = torch.where(scores > detect_threshold)
-            # print(output[0]["labels"][idx])
-            # boxes = bxs[idx]
-            # res = draw_bounding_boxes(img_tensor, boxes)
-            keypoints = kpts[idx]
-            keypoints = keypoints[:, :11, :]
+
+            classes = output[0]["labels"][idx]
+            boxes = bxs[idx]
+            boxes = torch.stack(
+                [box for box, class_ix in zip(boxes, classes) if class_ix.item() == 1]
+            )
+
+            res = draw_bounding_boxes(img_tensor, boxes)
+            # keypoints = kpts[idx]
+            # keypoints = keypoints[:, :11, :]
+            show(res)
+            plt.show()
+
             # print(keypoints.shape)
-            res = draw_keypoints(
+    """     res = draw_keypoints(
                 img_tensor,
                 keypoints,
                 colors="blue",
                 radius=3,
-                connectivity=connect_skeleton,
-            )
-            show(res)
-            plt.show()
+                connectivity=connect_skeleton,)"""

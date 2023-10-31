@@ -78,11 +78,13 @@ def post_process_yolo_preds(
     preds: list, orig_image: Image, model_resolution: Tuple = (640, 640)
 ) -> np.ndarray:
     photo = orig_image
-    preds = non_max_suppression_face(preds[0])[0]
+    preds = non_max_suppression_face(preds[0], conf_thres=0.7)[0]
     if preds.shape[0] == 0:
         return preds
     preds = [pred.cpu()[:4] for pred in preds]
     preds = scale_box(
         model_resolution, torch.stack(preds, dim=0), (photo.height, photo.width)
     ).round()
+    preds = torch.clamp(preds, min=0)
+    preds = preds[preds[:, 0].argsort()]
     return preds.numpy()
