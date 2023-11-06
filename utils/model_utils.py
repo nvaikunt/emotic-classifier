@@ -9,6 +9,7 @@ from torchvision.models.detection.ssd import SSD
 from models.yolo import Model
 from yolo_utils.general import non_max_suppression_face
 from utils.data_utils import post_process_yolo_preds
+import math
 
 
 def generate_face_bbox(
@@ -75,3 +76,16 @@ def generate_keypoints(
     keypoints = keypoints[:, :11, :]
     keypoints = keypoints[keypoints[:, 0, 0].argsort()]
     return keypoints
+
+
+def get_hidden_layer_sizes(start_val, num_layers, strategy="bottleneck"):
+    hidden_layers = []
+    for i in range(num_layers):
+        if strategy == "bottleneck":
+            current_layer_sz = start_val // (i + 1)
+        elif strategy == "expand":
+            current_layer_sz = int(start_val * math.pow(1.1, (i + 1)))
+        else:
+            current_layer_sz = start_val
+        hidden_layers.append(current_layer_sz)
+    return hidden_layers

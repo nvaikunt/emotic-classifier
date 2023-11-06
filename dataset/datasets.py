@@ -14,6 +14,9 @@ from torchvision.models.detection import (
     SSDLite320_MobileNet_V3_Large_Weights,
     ssdlite320_mobilenet_v3_large,
 )
+import sys
+
+sys.path.append("./")
 from models.yolo import Model
 from tqdm import tqdm
 from utils.data_utils import load_and_clean_data, get_cropped_image
@@ -253,21 +256,35 @@ class FullImageDataset(GenericDataset):
             person_images = self.get_person_images_from_roi(roi_image)
             poi_image = person_images[0]
             face_img_tensor = self.get_face_tensor_from_img(poi_image)
-            full_img_tensor = self.get_face_tensor_from_img(poi_image)
+            full_img_tensor = self.get_full_img_tensor(poi_image)
         return face_img_tensor, full_img_tensor, labels
 
 
 if __name__ == "__main__":
-    annotation_csv = "../emotic/emotic_pre/train.csv"
+    train_csv = "../emotic/emotic_pre/train.csv"
+    val_csv = "../emotic/emotic_pre/val.csv"
     data_folder = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/emotic"
     yolo_config_full = (
         "/Users/navaneethanvaikunthan/Documents/emotic-classifier/models/yolov5n.yaml"
     )
     yolo_weights = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/model_weights/pretrained/yolov5n-face_new.pt"
-    train_dataset = KeyPointDataset(
-        annotation_csv=annotation_csv,
+
+    train_keypoint_dataset = KeyPointDataset(
+        annotation_csv=train_csv,
         data_folder=data_folder,
         preprocess_feats=True,
         yolo_model_cfg=yolo_config_full,
         yolo_model_path=yolo_weights,
+        model_device="cuda",
+        split="train",
+    )
+
+    train_val_dataset = KeyPointDataset(
+        annotation_csv=val_csv,
+        data_folder=data_folder,
+        preprocess_feats=True,
+        yolo_model_cfg=yolo_config_full,
+        yolo_model_path=yolo_weights,
+        model_device="cuda",
+        split="val",
     )

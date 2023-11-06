@@ -56,7 +56,7 @@ class FullImageModel(nn.Module):
                 in_features=(self.backbone_1_out_feats + self.backbone_2_out_feats),
                 out_features=self.post_concat_feat_sz,
             ),
-            nn.ReLU()
+            nn.ReLU(),
         )
 
         layers: List[nn.Module] = [
@@ -121,22 +121,23 @@ class KeypointsModel(nn.Module):
 
         self.first_fusion_block = nn.Sequential(
             nn.Dropout(p=dropout_p),
-            nn.Linear(
-                self.post_concat_feat_sz, self.hidden_size_const
-            ),
-            nn.ReLU())
+            nn.Linear(self.post_concat_feat_sz, self.hidden_size_const),
+            nn.ReLU(),
+        )
         self.intermediate_fusion_block = nn.Sequential(
             nn.Dropout(p=dropout_p),
             nn.Linear(
                 self.hidden_size_const + self.keypoint_feats,
                 self.hidden_size_const,
             ),
-            nn.ReLU()
+            nn.ReLU(),
         )
         blocks = [self.first_fusion_block]
         # Additional Hidden Layers
         if self.num_hidden_fusion_layers > 1:
-            intermediate_fusion_blocks = [self.fusion_block for _ in range(1, self.num_hidden_fusion_layers)]
+            intermediate_fusion_blocks = [
+                self.fusion_block for _ in range(1, self.num_hidden_fusion_layers)
+            ]
             blocks.extend(intermediate_fusion_blocks)
 
         self.fusion_layers = nn.ModuleList(blocks)
@@ -169,15 +170,13 @@ class OnePassModel(nn.Module):
         self.backbone_out_feats = 1536
         if hidden_sizes:
             assert (
-                    len(hidden_sizes) == num_hidden_layers
+                len(hidden_sizes) == num_hidden_layers
             ), f"List of hidden sizes MUST HAVE {num_hidden_layers} items"
             self.hidden_sizes = hidden_sizes
         else:
             self.hidden_sizes = [hidden_size_const] * num_hidden_layers
         # Init backbones
-        self.image_backbone = efficientnet_b3(
-            weights=EfficientNet_B3_Weights.DEFAULT
-        )
+        self.image_backbone = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
         # Project to Hidden
         self.projection = nn.Sequential(
             nn.Dropout(p=dropout_p),
@@ -185,7 +184,7 @@ class OnePassModel(nn.Module):
                 in_features=self.backbone_out_feats,
                 out_features=self.hidden_sizes[0],
             ),
-            nn.ReLU()
+            nn.ReLU(),
         )
         layers: List[nn.Module] = [
             nn.Dropout(p=dropout_p),
@@ -206,6 +205,7 @@ class OnePassModel(nn.Module):
         projected_feats = self.projection(image_feats)
         hidden_output = self.linear_layers(projected_feats)
         return self.regression(hidden_output)
+
 
 if __name__ == "__main__":
     FullImageModel()
