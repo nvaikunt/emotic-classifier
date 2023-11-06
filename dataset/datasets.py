@@ -155,18 +155,22 @@ class KeyPointDataset(GenericDataset):
             person_images = self.get_person_images_from_roi(roi_image)
             # Get Image Tensor of Face
             for poi_image in person_images:
-                new_record = {
-                    "face_tensor": self.get_face_tensor_from_img(poi_image),
-                    "keypoints": generate_keypoints(
-                        self.keypoint_model,
-                        poi_image,
-                        self.tensor_transforms,
-                        self.model_device,
-                        detect_threshold=self.keypoint_detect_threshold,
-                    )[0],
-                    "labels": torch.Tensor(record["Continuous_Labels"]),
-                }
-                if new_record["face_tensor"] is None:
+                try: 
+                    new_record = {
+                        "face_tensor": self.get_face_tensor_from_img(poi_image),
+                        "keypoints": generate_keypoints(
+                            self.keypoint_model,
+                            poi_image,
+                            self.tensor_transforms,
+                            self.model_device,
+                            detect_threshold=self.keypoint_detect_threshold,
+                        )[0],
+                        "labels": torch.Tensor(record["Continuous_Labels"]),
+                    }
+                    if new_record["face_tensor"] is None:
+                        continue
+                except IndexError: 
+                    print(f"WARNING: No keypoints found for {record['img_path']}. Skipping example")
                     continue
                 # Get Keypoints
                 new_dataset.append(new_record)
@@ -261,13 +265,13 @@ class FullImageDataset(GenericDataset):
 
 
 if __name__ == "__main__":
-    train_csv = "../emotic/emotic_pre/train.csv"
-    val_csv = "../emotic/emotic_pre/val.csv"
-    data_folder = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/emotic"
+    train_csv = "./emotic/emotic_pre/train.csv"
+    val_csv = "./emotic/emotic_pre/val.csv"
+    data_folder = "./emotic"
     yolo_config_full = (
-        "/Users/navaneethanvaikunthan/Documents/emotic-classifier/models/yolov5n.yaml"
+        "./models/yolov5n.yaml"
     )
-    yolo_weights = "/Users/navaneethanvaikunthan/Documents/emotic-classifier/model_weights/pretrained/yolov5n-face_new.pt"
+    yolo_weights = "./model_weights/pretrained/yolov5n-face_new.pt"
 
     train_keypoint_dataset = KeyPointDataset(
         annotation_csv=train_csv,
@@ -277,9 +281,31 @@ if __name__ == "__main__":
         yolo_model_path=yolo_weights,
         model_device="cuda",
         split="train",
+        keypoint_detect_threshold=0.7
     )
 
-    train_val_dataset = KeyPointDataset(
+    val_keypoint_dataset = KeyPointDataset(
+        annotation_csv=val_csv,
+        data_folder=data_folder,
+        preprocess_feats=True,
+        yolo_model_cfg=yolo_config_full,
+        yolo_model_path=yolo_weights,
+        model_device="cuda",
+        split="val",
+        keypoint_detect_threshold=0.7
+    )
+"""
+    train_image_dataset = FullImageDataset(
+        annotation_csv=train_csv,
+        data_folder=data_folder,
+        preprocess_feats=True,
+        yolo_model_cfg=yolo_config_full,
+        yolo_model_path=yolo_weights,
+        model_device="cuda",
+        split="train",
+    )
+
+    val_image_dataset = FullImageDataset(
         annotation_csv=val_csv,
         data_folder=data_folder,
         preprocess_feats=True,
@@ -288,3 +314,4 @@ if __name__ == "__main__":
         model_device="cuda",
         split="val",
     )
+    """

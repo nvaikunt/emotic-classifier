@@ -29,7 +29,7 @@ def generate_face_bbox(
 
 
 def generate_person_bboxes(
-    model: SSD, image: Union[Image, str], transforms: v2.Compose, device: str
+    model: SSD, image: Union[Image, str], transforms: v2.Compose, device: str, detect_threshold: int = 0.5
 ) -> list:
     input_tens = transforms(image)
     input_tens = input_tens.to(device)
@@ -41,15 +41,13 @@ def generate_person_bboxes(
         scores = output[0]["scores"]
 
         # Filter boxes by scores and labels
-        detect_threshold = 0.9
         idx = torch.where(scores > detect_threshold)
         classes = output[0]["labels"][idx]
-        boxes = bxs[idx]
+        all_boxes = bxs[idx]
+        boxes =  [box for box, class_ix in zip(all_boxes, classes) if class_ix.item() == 1]
         if len(boxes) == 0:
             return []
-        boxes = torch.stack(
-            [box for box, class_ix in zip(boxes, classes) if class_ix.item() == 1]
-        )
+        boxes = torch.stack(boxes)
         return boxes.tolist()
 
 
