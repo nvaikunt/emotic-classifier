@@ -159,6 +159,11 @@ class KeyPointDataset(GenericDataset):
         for record in tqdm(self.dataset):
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
+
+            if person_images is None: 
+                person_images = [roi_image]
+       
+
             # Get Image Tensor of Face
             for poi_image in person_images:
                 try: 
@@ -253,7 +258,12 @@ class FullImageDataset(GenericDataset):
         skipped_examples = []
         for record in tqdm(self.dataset):
             roi_image = self.get_roi_from_img_path(record)
+            is_person = True
             person_images = self.get_person_images_from_roi(roi_image)
+            if person_images is None: 
+                person_images = [roi_image]
+                is_person = False
+
             for poi_image in person_images:
                 new_record = {
                     "full_tensor": self.get_full_img_tensor(
@@ -264,7 +274,7 @@ class FullImageDataset(GenericDataset):
                     ),  # Get Image Tensor of Face
                     "labels": torch.Tensor(record["Continuous_Labels"]),
                 }
-                if new_record["face_tensor"] is None or new_record["full_tensor"] is None:
+                if new_record["face_tensor"] is None or not is_person:
                     skipped_examples.append(record["img_path"])
                     continue
                 new_dataset.append(new_record)
