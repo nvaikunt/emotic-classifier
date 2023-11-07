@@ -17,13 +17,13 @@ import torchvision.transforms.functional as F
 
 from dataset.datasets import KeyPointDataset, FullImageDataset
 from models.full_models import FullImageModel, KeypointsModel, OnePassModel
-from utils.model_utils import get_hidden_layer_sizes, load_model
+from utils.model_utils import get_hidden_layer_sizes
 import torch.optim as optim
 from torch.optim.lr_scheduler import LinearLR, ExponentialLR
 
 
 def load_model(model_args: Namespace) -> nn.Module:
-    if model_args.model_type == "keypoint":
+    if model_args.model_type == "keypoints":
         model = KeypointsModel(
             num_hidden_fusion_layers=model_args.num_fusion_layers,
             dropout_p=model_args.dropout,
@@ -68,7 +68,8 @@ def load_dataset(
     yolo_model_cfg = "./models/yolov5n.yaml"
     yolo_model_pth = "./model_weights/pretrained/yolov5n-face_new.pt"
     if preproccesed_feat_path == "":
-        preprocess_feats = False
+        preprocess_feats = False 
+        preproccesed_feat_path = None
     else:
         preprocess_feats = True
     if model_type == "keypoints":
@@ -153,6 +154,7 @@ def train(
         preproccesed_feat_path=preproccesed_train_path,
         device=device,
     )
+    print(train_dataset[1])
 
     val_dataset = load_dataset(
         model_type=model_args.model_type,
@@ -172,7 +174,7 @@ def train(
 
     # Intialize Optimizer and Loss
     optimizer = optim.Adam(model.parameters(), lr=optim_args.lr)
-    if args.sched_type == "linear":
+    if optim_args.sched_type == "linear":
         scheduler = LinearLR(
             optimizer,
             start_factor=optim_args.start_factor,
@@ -183,6 +185,7 @@ def train(
         scheduler = ExponentialLR(optimizer, gamma=optim_args.gamma)
     mse_loss = nn.MSELoss()
     # Start Logging
+    
     run = wandb.init(
         project=f"EMOTIC Based Visual Confusion Detection",
         config={
@@ -193,6 +196,7 @@ def train(
             "optim_type": optim_args.sched_type,
         },
     )
+    
     train_loss = 0
 
     # Begin Loop
@@ -201,9 +205,9 @@ def train(
         for step, train_batch in tqdm(enumerate(train_dataloader)):
             # Put Tensors on Device
             body_tensor, face_tensor, labels = train_batch
-            body_tensor.to(device)
-            face_tensor.to(device)
-            labels.to(device)
+            body_tensor = body_tensor.to(device)
+            face_tensor = face_tensor.to(device)
+            labels = labels.to(device)
 
             # Get outputs
             optimizer.zero_grad()

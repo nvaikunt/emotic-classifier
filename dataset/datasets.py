@@ -87,7 +87,7 @@ class GenericDataset(Dataset):
             self.person_detector, full_image, self.tensor_transforms, self.model_device
         )
         if not people_bboxes:
-            return [full_image]
+            return None
         people_images = [
             get_cropped_image(full_image, person_bbox) for person_bbox in people_bboxes
         ]
@@ -100,7 +100,12 @@ class GenericDataset(Dataset):
         if len(face_bbox) == 0:
             return None
         face_image = get_cropped_image(full_image, face_bbox)
+        face_image = face_image.resize((160, 160))
         return self.tensor_transforms(face_image)
+    
+    def get_full_img_tensor(self, image: Image):
+        image = image.resize((160, 160))
+        return self.tensor_transforms(image)
 
     def __len__(self):
         return len(self.dataset)
@@ -124,7 +129,7 @@ class KeyPointDataset(GenericDataset):
         preprocessed_feat_path: str = None,
         split: str = "train",
         model_device: str = "cpu",
-        keypoint_detect_threshold: float = 0.9,
+        keypoint_detect_threshold: float = 0.3,
     ):
         super().__init__(
             annotation_csv,
@@ -150,6 +155,7 @@ class KeyPointDataset(GenericDataset):
 
     def preprocess(self) -> List[dict]:
         new_dataset = []
+        skipped_examples = []
         for record in tqdm(self.dataset):
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
@@ -168,12 +174,18 @@ class KeyPointDataset(GenericDataset):
                         "labels": torch.Tensor(record["Continuous_Labels"]),
                     }
                     if new_record["face_tensor"] is None:
+                        skipped_examples.append(record["img_path"])
                         continue
                 except IndexError: 
-                    print(f"WARNING: No keypoints found for {record['img_path']}. Skipping example")
+                    # print(f"WARNING: No keypoints found for {record['img_path']}. Skipping example")
+                    skipped_examples.append(record["img_path"])
                     continue
+        
                 # Get Keypoints
                 new_dataset.append(new_record)
+        print(f"Number of Skipped Images: {len(skipped_examples)}")
+        print(skipped_examples[0])
+        print(skipped_examples[-1])
         return new_dataset
 
     def __getitem__(self, idx):
@@ -187,16 +199,25 @@ class KeyPointDataset(GenericDataset):
             labels = torch.Tensor(record["Continuous_Labels"])
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
-            poi_image = person_images[0]
+            if person_images is not None: 
+                poi_image = person_images[0]
+            else: 
+                poi_image = roi_image
             face_img_tensor = self.get_face_tensor_from_img(poi_image)
-            keypoint_tensor = generate_keypoints(
-                self.keypoint_model,
-                poi_image,
-                self.tensor_transforms,
-                self.model_device,
-                detect_threshold=self.keypoint_detect_threshold,
-            )
-        return face_img_tensor, keypoint_tensor, labels
+            if face_img_tensor is None: 
+                face_img_tensor = self.get_full_img_tensor(poi_image)
+            try: 
+                keypoint_tensor = generate_keypoints(
+                    self.keypoint_model,
+                    poi_image,
+                    self.tensor_transforms,
+                    self.model_device,
+                    detect_threshold=self.keypoint_detect_threshold,
+                )[0]
+            except IndexError: 
+                keypoint_tensor = torch.rand((11, 3))
+
+        return keypoint_tensor, face_img_tensor, labels
 
 
 class FullImageDataset(GenericDataset):
@@ -225,11 +246,11 @@ class FullImageDataset(GenericDataset):
             self.dataset = self.preprocess()
             self.save_preprocessed()
 
-    def get_full_img_tensor(self, image: Image):
-        return self.tensor_transforms(image)
+
 
     def preprocess(self) -> List[dict]:
         new_dataset = []
+        skipped_examples = []
         for record in tqdm(self.dataset):
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
@@ -243,8 +264,13 @@ class FullImageDataset(GenericDataset):
                     ),  # Get Image Tensor of Face
                     "labels": torch.Tensor(record["Continuous_Labels"]),
                 }
+                if new_record["face_tensor"] is None or new_record["full_tensor"] is None:
+                    skipped_examples.append(record["img_path"])
+                    continue
                 new_dataset.append(new_record)
-
+        print(f"Number of Skipped Images: {len(skipped_examples)}")
+        print(skipped_examples[0])
+        print(skipped_examples[-1])
         return new_dataset
 
     def __getitem__(self, idx):
@@ -258,10 +284,15 @@ class FullImageDataset(GenericDataset):
             labels = torch.Tensor(record["Continuous_Labels"])
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
-            poi_image = person_images[0]
+            if person_images is not None: 
+                poi_image = person_images[0]
+            else: 
+                poi_image = roi_image
             face_img_tensor = self.get_face_tensor_from_img(poi_image)
+            if face_img_tensor is None: 
+                face_img_tensor = self.get_full_img_tensor(poi_image)
             full_img_tensor = self.get_full_img_tensor(poi_image)
-        return face_img_tensor, full_img_tensor, labels
+        return  full_img_tensor, face_img_tensor, labels
 
 
 if __name__ == "__main__":
@@ -272,6 +303,7 @@ if __name__ == "__main__":
         "./models/yolov5n.yaml"
     )
     yolo_weights = "./model_weights/pretrained/yolov5n-face_new.pt"
+
 
     train_keypoint_dataset = KeyPointDataset(
         annotation_csv=train_csv,
@@ -294,7 +326,7 @@ if __name__ == "__main__":
         split="val",
         keypoint_detect_threshold=0.7
     )
-"""
+
     train_image_dataset = FullImageDataset(
         annotation_csv=train_csv,
         data_folder=data_folder,
@@ -314,4 +346,3 @@ if __name__ == "__main__":
         model_device="cuda",
         split="val",
     )
-    """

@@ -58,8 +58,11 @@ def get_cropped_image(
 ) -> Image:
     if not isinstance(image, Image):
         image = PIL_Image.open(image)
+
     if not isinstance(bbox, list):
         bbox = bbox.tolist()
+    if image.mode != "RGB": 
+        image = image.convert('RGB')
     return image.crop(tuple(bbox))
 
 
@@ -75,10 +78,10 @@ def scale_box(img2_size, box, img1_size):
 
 
 def post_process_yolo_preds(
-    preds: list, orig_image: Image, model_resolution: Tuple = (640, 640)
+    preds: list, orig_image: Image, model_resolution: Tuple = (640, 640), conf_thres = 0.7
 ) -> np.ndarray:
     photo = orig_image
-    preds = non_max_suppression_face(preds[0], conf_thres=0.7)[0]
+    preds = non_max_suppression_face(preds[0], conf_thres=conf_thres)[0]
     if preds.shape[0] == 0:
         return preds
     preds = [pred.cpu()[:4] for pred in preds]

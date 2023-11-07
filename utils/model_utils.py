@@ -22,7 +22,7 @@ def generate_face_bbox(
         input_tens = input_tens.unsqueeze(0)
     with torch.no_grad():
         output = model(input_tens)
-        preds = post_process_yolo_preds(output, image)
+        preds = post_process_yolo_preds(output, image, conf_thres = 0.7)
     if len(preds) == 0:
         return []
     return preds[0]
@@ -62,7 +62,8 @@ def generate_keypoints(
     input_tens = input_tens.to(device)
     if len(input_tens.shape) == 3:
         input_tens = input_tens.unsqueeze(0)
-    output = model(input_tens)
+    with torch.no_grad():
+        output = model(input_tens)
 
     # Filter out Keypoints for Objects w/ low prob of being human
     scores = output[0]["scores"]
@@ -73,6 +74,7 @@ def generate_keypoints(
     # Keep only upper body keypoints
     keypoints = keypoints[:, :11, :]
     keypoints = keypoints[keypoints[:, 0, 0].argsort()]
+  
     return keypoints
 
 
