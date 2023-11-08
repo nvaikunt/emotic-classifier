@@ -131,6 +131,7 @@ def train(
         config={
             "model_type": model_args.model_type,
             "learning_rate": optim_args.lr,
+            "regression_learning_rate": optim_args.regression_lr,
             "epochs": train_args.num_epochs,
             "batch_size": train_args.batch_sz,
             "optim_type": optim_args.sched_type,
@@ -203,7 +204,7 @@ def train(
     os.makedirs(train_args.save_folder, exist_ok=True)
     save_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_path = os.path.join(
-        train_args.save_folder, f"{model_args.model_type}_{save_time}"
+        train_args.save_folder, f"{model_args.model_type}_{save_time}.pt"
     )
     torch.save(model.state_dict(), save_path)
 
@@ -228,8 +229,8 @@ if __name__ == "__main__":
     parser.add_argument("--exp_gamma", type=float, default=0.8)
 
     # Train Args
-    parser.add_argument("--num_epochs", type=float, default=3)
-    parser.add_argument("--batch_size", type=float, default=8)
+    parser.add_argument("--num_epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--eval_strategy", type=str, default="epoch")
     parser.add_argument("--eval_steps", type=int, default=700)
     parser.add_argument("--log_strategy", type=str, default="steps")

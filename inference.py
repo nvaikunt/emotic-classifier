@@ -39,6 +39,8 @@ class ConfusionDetectionInference:
         # Load Model Class
         self.model = load_model(model_args=model_config)
         self.model_config = model_config
+        if self.model_config.model_type not in ['keypoints', 'full_image', 'single_body_image', 'single_face_image']:
+            raise ValueError(f"Must pass in valid model type in {['keypoints', 'full_image', 'single_body_image', 'single_face_image']}")
         self.device = device
         self.model.to(self.device)
 
@@ -53,7 +55,7 @@ class ConfusionDetectionInference:
         )
         # Save Feature Thresholds
         if threshold_dict is None:
-            self.thresholds = {"person": 0.8, "keypoint": 0.9, "face": 0.7}
+            self.thresholds = {"person": 0.8, "keypoints": 0.9, "face": 0.7}
         else:
             assert (
                 "person" in threshold_dict
@@ -139,7 +141,7 @@ class ConfusionDetectionInference:
                 person_img,
                 self.tensor_transforms,
                 device=self.device,
-                detect_threshold=self.threshold["keypoints"],
+                detect_threshold=self.thresholds["keypoints"],
                 inference=True,
             )
             if len(body_feat) == 0:
@@ -177,16 +179,21 @@ class ConfusionDetectionInference:
             if self.model_config.model_type == "single_body_image":
                 if body_feat is None:
                     continue
+                body_feat = body_feat.to(self.device).unsqueeze(0)
                 outputs = self.model(body_feat)
             elif self.model_config.model_type == "single_face_image":
                 if face_feat is None:
                     continue
+                face_feat = face_feat.to(self.device).unsqueeze(0)
                 outputs = self.model(face_feat)
             else:
                 if body_feat is None or face_feat is None:
                     continue
+                body_feat = body_feat.to(self.device).unsqueeze(0)
+                face_feat = face_feat.to(self.device).unsqueeze(0)
                 outputs = self.model(body_feat, face_feat)
-            preds = torch.clamp(outputs, 1, 10)
+            preds = torch.clamp(outputs, 1, 10).squeeze(0).detach().cpu()
+            print(preds)
             pred_list.append(preds)
         if not pred_list:
             return 0
@@ -199,7 +206,9 @@ if __name__ == "__main__":
     yolo_config_full = "./models/yolov5n.yaml"
     yolo_weights = "./model_weights/pretrained/yolov5n-face_new.pt"
     # Model Args
-    parser.add_argument("--model_save_path", type=str, default="keypoint")
+
+    parser.add_argument("--model_save_path", type=str, default="")
+    parser.add_argument("--model_type", type=str, default="keypoint")
     parser.add_argument("--num_fusion_layers", type=int, default=3)
     parser.add_argument("--hidden_sz_const", type=int, default=512)
     parser.add_argument("--post_concat_feat_sz", type=int, default=512)
@@ -209,13 +218,30 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 
-    model_type = args.model_save_path.split("/")[-1].split("_")[0]
+    
 
     # Can hardcode this if needed
     model_args = Namespace(
-        model_type=model_type,
+        model_type=args.model_type,
         num_fusion_layers=args.num_fusion_layers,
         hidden_sz_const=args.hidden_sz_const,
         post_concat_feat_sz=args.post_concat_feat_sz,
         hidden_sz_strat=args.hidden_size_strategy,
+        dropout=0.0
     )
+
+    confusion_detector = ConfusionDetectionInference(
+        model_save_path=args.model_save_path,
+        model_config=model_args,
+        device=args.device,
+        yolo_config = "./models/yolov5n.yaml",
+        yolo_model_pth= "./model_weights/pretrained/yolov5n-face_new.pt"
+    )
+    
+    demo_files = ["./emotic/emodb_small/images/68ywy6tv3qzjmyl3ip.jpg",  "./emotic/emodb_small/images/cbjt98z7oq43vtftdu.jpg"]
+    for file in demo_files: 
+        demo_img = PIL_Image.open(file)
+        confusion_ind = confusion_detector.run_inference(demo_img)
+        print(confusion_ind)
+
+

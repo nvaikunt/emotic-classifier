@@ -173,7 +173,7 @@ class OnePassModel(nn.Module):
     ):
         super().__init__()
         assert num_hidden_layers > 0, "Must be at least 1 Hidden Layer"
-        self.num_hidden_fusion_layers = num_hidden_layers
+        self.num_hidden_layers = num_hidden_layers
         self.backbone_out_feats = 1536
         if hidden_sizes:
             assert (
@@ -184,6 +184,7 @@ class OnePassModel(nn.Module):
             self.hidden_sizes = [hidden_size_const] * num_hidden_layers
         # Init backbones
         self.image_backbone = efficientnet_b3(weights=EfficientNet_B3_Weights.DEFAULT)
+        self.image_backbone.classifier = nn.Identity()
         # Project to Hidden
         self.projection = nn.Sequential(
             nn.Dropout(p=dropout_p),
@@ -199,12 +200,12 @@ class OnePassModel(nn.Module):
             nn.ReLU(),
         ]
         # Additional Hidden Layers
-        for i in range(1, self.num_hidden_fusion_layers):
+        for i in range(1, self.num_hidden_layers):
             layers.append(nn.Dropout(p=dropout_p))
-            layers.append(nn.Linear(hidden_sizes[i - 1], hidden_sizes[i]))
+            layers.append(nn.Linear(self.hidden_sizes[i - 1], self.hidden_sizes[i]))
             layers.append(nn.ReLU())
         self.linear_layers = nn.Sequential(*layers)
-        self.regression = nn.Linear(hidden_sizes[-1], 3)
+        self.regression = nn.Linear(self.hidden_sizes[-1], 3)
 
     def forward(self, image_tensor: torch.Tensor):
         image_feats = self.image_backbone(image_tensor)
