@@ -17,84 +17,9 @@ import torchvision.transforms.functional as F
 
 from dataset.datasets import KeyPointDataset, FullImageDataset
 from models.full_models import FullImageModel, KeypointsModel, OnePassModel
-from utils.model_utils import get_hidden_layer_sizes
+from utils.train_utils import load_dataset, load_model, filter_model_params
 import torch.optim as optim
 from torch.optim.lr_scheduler import LinearLR, ExponentialLR
-
-
-def load_model(model_args: Namespace) -> nn.Module:
-    if model_args.model_type == "keypoints":
-        model = KeypointsModel(
-            num_hidden_fusion_layers=model_args.num_fusion_layers,
-            dropout_p=model_args.dropout,
-            hidden_size_const=model_args.hidden_sz_const,
-            post_concat_feat_sz=model_args.post_concat_feat_sz,
-        )
-    else:
-        if model_args.hidden_sz_strat == "constant":
-            hidden_size_list = None
-        else:
-            hidden_size_list = get_hidden_layer_sizes(
-                model_args.hidden_sz_const,
-                model_args.num_fusion_layers,
-                strategy=model_args.hidden_sz_strat,
-            )
-        if model_args.model_type == "full_image":
-            model = FullImageModel(
-                num_hidden_fusion_layers=model_args.num_fusion_layers,
-                dropout_p=model_args.dropout,
-                hidden_sizes=hidden_size_list,
-                hidden_size_const=model_args.hidden_sz_const,
-                post_concat_feat_sz=model_args.post_concat_feat_sz,
-            )
-        else:
-            model = OnePassModel(
-                num_hidden_fusion_layers=model_args.num_fusion_layers,
-                dropout_p=model_args.dropout,
-                hidden_sizes=hidden_size_list,
-                hidden_size_const=model_args.hidden_sz_const,
-            )
-    return model
-
-
-def load_dataset(
-    model_type: str,
-    split: str,
-    annotation_csv: str,
-    data_folder: str,
-    preproccesed_feat_path: str,
-    device: str,
-):
-    yolo_model_cfg = "./models/yolov5n.yaml"
-    yolo_model_pth = "./model_weights/pretrained/yolov5n-face_new.pt"
-    if preproccesed_feat_path == "":
-        preprocess_feats = False 
-        preproccesed_feat_path = None
-    else:
-        preprocess_feats = True
-    if model_type == "keypoints":
-        dataset = KeyPointDataset(
-            annotation_csv=annotation_csv,
-            data_folder=data_folder,
-            yolo_model_cfg=yolo_model_cfg,
-            yolo_model_path=yolo_model_pth,
-            preprocess_feats=preprocess_feats,
-            preprocessed_feat_path=preproccesed_feat_path,
-            split=split,
-            model_device=device,
-        )
-    else:
-        dataset = FullImageDataset(
-            annotation_csv=annotation_csv,
-            data_folder=data_folder,
-            yolo_model_cfg=yolo_model_cfg,
-            yolo_model_path=yolo_model_pth,
-            preprocess_feats=preprocess_feats,
-            preprocessed_feat_path=preproccesed_feat_path,
-            split=split,
-            model_device=device,
-        )
-    return dataset
 
 
 def validate(
@@ -103,17 +28,20 @@ def validate(
     epoch: int,
     device: str,
     model_type: str,
+    clamp: bool,
 ):
     model.eval()
     mse_loss = nn.MSELoss()
+    avg_losses = []
+    val_loss = 0
     with torch.no_grad():
         print(f"Starting Validation, currently in Epoch {epoch}")
-        for _, val_batch in tqdm(enumerate(dataloader)):
+        for step, val_batch in tqdm(enumerate(dataloader)):
             # Put Tensors on Device
             body_tensor, face_tensor, labels = val_batch
-            body_tensor.to(device)
-            face_tensor.to(device)
-            labels.to(device)
+            body_tensor = body_tensor.to(device)
+            face_tensor = face_tensor.to(device)
+            labels = labels.to(device)
 
             # Get outputs
 
@@ -123,12 +51,20 @@ def validate(
                 outputs = model(face_tensor)
             else:
                 outputs = model(body_tensor, face_tensor)
-
+            if clamp:
+                outputs = torch.clamp(outputs, 1, 10)
+            print(f"Output Reg {outputs}")
+            print(f"Target Reg {labels}")
             # Loss and Step
             loss = mse_loss(outputs, labels)
+            print(f"Loss for batch: {loss}")
             val_loss += loss.item()
+            if step % 10 == 0:
+                avg_loss = val_loss / 10
+                val_loss = 0
+                avg_losses.append(avg_loss)
     model.train()
-    return val_loss / len(dataloader)
+    return sum(avg_losses) / len(avg_losses)
 
 
 def train(
@@ -154,7 +90,6 @@ def train(
         preproccesed_feat_path=preproccesed_train_path,
         device=device,
     )
-    print(train_dataset[1])
 
     val_dataset = load_dataset(
         model_type=model_args.model_type,
@@ -173,7 +108,12 @@ def train(
     )
 
     # Intialize Optimizer and Loss
-    optimizer = optim.Adam(model.parameters(), lr=optim_args.lr)
+    reg_head_params, backbone_params = filter_model_params(model)
+    param_config = [
+        {"params": backbone_params},
+        {"params": reg_head_params, "lr": optim_args.regression_lr},
+    ]
+    optimizer = optim.Adam(param_config, lr=optim_args.lr)
     if optim_args.sched_type == "linear":
         scheduler = LinearLR(
             optimizer,
@@ -185,7 +125,7 @@ def train(
         scheduler = ExponentialLR(optimizer, gamma=optim_args.gamma)
     mse_loss = nn.MSELoss()
     # Start Logging
-    
+
     run = wandb.init(
         project=f"EMOTIC Based Visual Confusion Detection",
         config={
@@ -196,7 +136,7 @@ def train(
             "optim_type": optim_args.sched_type,
         },
     )
-    
+
     train_loss = 0
 
     # Begin Loop
@@ -219,6 +159,8 @@ def train(
                 outputs = model(body_tensor, face_tensor)
 
             # Loss and Step
+            if train_args.clamp:
+                outputs = torch.clamp(outputs, 1, 10)
             loss = mse_loss(outputs, labels)
             loss.backward()
             train_loss += loss.item()
@@ -236,6 +178,7 @@ def train(
                     epoch,
                     device,
                     model_type=model_args.model_type,
+                    clamp=train_args.clamp,
                 )
                 wandb.log({"val_mse": val_loss})
         # Epoch Logging and Eval
@@ -245,13 +188,19 @@ def train(
             train_loss = 0
         if train_args.eval_strat == "epoch":
             val_loss = validate(
-                model, val_dataloader, epoch, device, model_type=model_args.model_type
+                model,
+                val_dataloader,
+                epoch,
+                device,
+                model_type=model_args.model_type,
+                clamp=train_args.clamp,
             )
             wandb.log({"val_mse": val_loss})
         # Anneal LR
         scheduler.step()
 
     print(f"Training Concluded! Saving model to folder {train_args.save_folder}")
+    os.makedirs(train_args.save_folder, exist_ok=True)
     save_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     save_path = os.path.join(
         train_args.save_folder, f"{model_args.model_type}_{save_time}"
@@ -272,6 +221,7 @@ if __name__ == "__main__":
 
     # Optimization Args
     parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--regression_lr", type=float, default=1e-2)
     parser.add_argument("--lr_sched_type", type=str, default="linear")
     parser.add_argument("--linear_start", type=float, default=1.0)
     parser.add_argument("--linear_end", type=float, default=0.1)
@@ -285,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_strategy", type=str, default="steps")
     parser.add_argument("--log_steps", type=int, default=10)
     parser.add_argument("--save_folder", type=str, default="./saved_models")
+    parser.add_argument("--clamp", action="store_true")
 
     # Misc
     parser.add_argument("--device", type=str, default="cuda")
@@ -304,6 +255,7 @@ if __name__ == "__main__":
 
     optim_args = Namespace(
         lr=args.lr,
+        regression_lr=args.regression_lr,
         sched_type=args.lr_sched_type,
         start_factor=args.linear_start,
         end_factor=args.linear_end,
@@ -318,6 +270,7 @@ if __name__ == "__main__":
         log_strat=args.log_strategy,
         log_steps=args.log_steps,
         save_folder=args.save_folder,
+        clamp=args.clamp,
     )
 
     train(

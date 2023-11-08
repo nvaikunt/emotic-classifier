@@ -84,7 +84,8 @@ class FullImageModel(nn.Module):
         combined_feats = torch.cat([face_image_feats, full_image_feats], dim=-1)
         projected_feats = self.projection(combined_feats)
         fused_feats = self.fusion_layers(projected_feats)
-        return self.regression(fused_feats)
+        reg_out = self.regression(fused_feats)
+        return reg_out
 
 
 class KeypointsModel(nn.Module):
@@ -136,7 +137,8 @@ class KeypointsModel(nn.Module):
         # Additional Hidden Layers
         if self.num_hidden_fusion_layers > 1:
             intermediate_fusion_blocks = [
-                self.intermediate_fusion_block for _ in range(1, self.num_hidden_fusion_layers)
+                self.intermediate_fusion_block
+                for _ in range(1, self.num_hidden_fusion_layers)
             ]
             blocks.extend(intermediate_fusion_blocks)
 
@@ -151,13 +153,14 @@ class KeypointsModel(nn.Module):
         x = self.projection(combined_feats)
         for i, fusion_block in enumerate(self.fusion_layers):
             prev_feats = x
-            if i == 0:  
+            if i == 0:
                 concat_feats = x
-            else: 
+            else:
                 concat_feats = torch.cat([x, keypoint_feats], dim=-1)
             x = fusion_block(concat_feats) + prev_feats
         fused_feats = torch.cat([x, keypoint_feats], dim=-1)
-        return self.regression(fused_feats)
+        reg_out = self.regression(fused_feats)
+        return reg_out
 
 
 class OnePassModel(nn.Module):
@@ -208,7 +211,8 @@ class OnePassModel(nn.Module):
         image_feats = torch.flatten(image_feats, 1)
         projected_feats = self.projection(image_feats)
         hidden_output = self.linear_layers(projected_feats)
-        return self.regression(hidden_output)
+        reg_out = self.regression(hidden_output)
+        return reg_out
 
 
 if __name__ == "__main__":

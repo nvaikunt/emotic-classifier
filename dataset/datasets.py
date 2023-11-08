@@ -102,7 +102,7 @@ class GenericDataset(Dataset):
         face_image = get_cropped_image(full_image, face_bbox)
         face_image = face_image.resize((160, 160))
         return self.tensor_transforms(face_image)
-    
+
     def get_full_img_tensor(self, image: Image):
         image = image.resize((160, 160))
         return self.tensor_transforms(image)
@@ -111,8 +111,11 @@ class GenericDataset(Dataset):
         return len(self.dataset)
 
     def save_preprocessed(self):
+        os.makedirs(os.path.join(self.data_folder, "preprocessed_feats"), exist_ok=True)
         save_path = os.path.join(
-            data_folder, "preprocessed_feats", f"{self.split}_{datetime.date.today()}"
+            self.data_folder,
+            "preprocessed_feats",
+            f"{self.split}_{datetime.date.today()}",
         )
         with open(save_path, "wb") as save_file:
             pickle.dump(self.dataset, save_file)
@@ -160,13 +163,12 @@ class KeyPointDataset(GenericDataset):
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
 
-            if person_images is None: 
+            if person_images is None:
                 person_images = [roi_image]
-       
 
             # Get Image Tensor of Face
             for poi_image in person_images:
-                try: 
+                try:
                     new_record = {
                         "face_tensor": self.get_face_tensor_from_img(poi_image),
                         "keypoints": generate_keypoints(
@@ -181,11 +183,11 @@ class KeyPointDataset(GenericDataset):
                     if new_record["face_tensor"] is None:
                         skipped_examples.append(record["img_path"])
                         continue
-                except IndexError: 
+                except IndexError:
                     # print(f"WARNING: No keypoints found for {record['img_path']}. Skipping example")
                     skipped_examples.append(record["img_path"])
                     continue
-        
+
                 # Get Keypoints
                 new_dataset.append(new_record)
         print(f"Number of Skipped Images: {len(skipped_examples)}")
@@ -204,14 +206,14 @@ class KeyPointDataset(GenericDataset):
             labels = torch.Tensor(record["Continuous_Labels"])
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
-            if person_images is not None: 
+            if person_images is not None:
                 poi_image = person_images[0]
-            else: 
+            else:
                 poi_image = roi_image
             face_img_tensor = self.get_face_tensor_from_img(poi_image)
-            if face_img_tensor is None: 
+            if face_img_tensor is None:
                 face_img_tensor = self.get_full_img_tensor(poi_image)
-            try: 
+            try:
                 keypoint_tensor = generate_keypoints(
                     self.keypoint_model,
                     poi_image,
@@ -219,7 +221,7 @@ class KeyPointDataset(GenericDataset):
                     self.model_device,
                     detect_threshold=self.keypoint_detect_threshold,
                 )[0]
-            except IndexError: 
+            except IndexError:
                 keypoint_tensor = torch.rand((11, 3))
 
         return keypoint_tensor, face_img_tensor, labels
@@ -251,8 +253,6 @@ class FullImageDataset(GenericDataset):
             self.dataset = self.preprocess()
             self.save_preprocessed()
 
-
-
     def preprocess(self) -> List[dict]:
         new_dataset = []
         skipped_examples = []
@@ -260,7 +260,7 @@ class FullImageDataset(GenericDataset):
             roi_image = self.get_roi_from_img_path(record)
             is_person = True
             person_images = self.get_person_images_from_roi(roi_image)
-            if person_images is None: 
+            if person_images is None:
                 person_images = [roi_image]
                 is_person = False
 
@@ -294,26 +294,23 @@ class FullImageDataset(GenericDataset):
             labels = torch.Tensor(record["Continuous_Labels"])
             roi_image = self.get_roi_from_img_path(record)
             person_images = self.get_person_images_from_roi(roi_image)
-            if person_images is not None: 
+            if person_images is not None:
                 poi_image = person_images[0]
-            else: 
+            else:
                 poi_image = roi_image
             face_img_tensor = self.get_face_tensor_from_img(poi_image)
-            if face_img_tensor is None: 
+            if face_img_tensor is None:
                 face_img_tensor = self.get_full_img_tensor(poi_image)
             full_img_tensor = self.get_full_img_tensor(poi_image)
-        return  full_img_tensor, face_img_tensor, labels
+        return full_img_tensor, face_img_tensor, labels
 
 
 if __name__ == "__main__":
     train_csv = "./emotic/emotic_pre/train.csv"
     val_csv = "./emotic/emotic_pre/val.csv"
     data_folder = "./emotic"
-    yolo_config_full = (
-        "./models/yolov5n.yaml"
-    )
+    yolo_config_full = "./models/yolov5n.yaml"
     yolo_weights = "./model_weights/pretrained/yolov5n-face_new.pt"
-
 
     train_keypoint_dataset = KeyPointDataset(
         annotation_csv=train_csv,
@@ -323,7 +320,7 @@ if __name__ == "__main__":
         yolo_model_path=yolo_weights,
         model_device="cuda",
         split="train",
-        keypoint_detect_threshold=0.7
+        keypoint_detect_threshold=0.7,
     )
 
     val_keypoint_dataset = KeyPointDataset(
@@ -334,7 +331,7 @@ if __name__ == "__main__":
         yolo_model_path=yolo_weights,
         model_device="cuda",
         split="val",
-        keypoint_detect_threshold=0.7
+        keypoint_detect_threshold=0.7,
     )
 
     train_image_dataset = FullImageDataset(
