@@ -13,7 +13,11 @@ import math
 
 
 def generate_face_bbox(
-    model: Model, image: Union[Image, str], transforms: v2.Compose, device: str, conf_thresh: float = 0.7
+    model: Model,
+    image: Union[Image, str],
+    transforms: v2.Compose,
+    device: str,
+    conf_thresh: float = 0.7,
 ) -> np.ndarray:
     input_img = image.resize((640, 640))
     input_tens = transforms(input_img)
@@ -63,7 +67,7 @@ def generate_keypoints(
     transforms: v2.Compose,
     device,
     detect_threshold=0.9,
-    inference: bool = False
+    inference: bool = False,
 ) -> torch.Tensor:
     input_tens = transforms(image)
     input_tens = input_tens.to(device)
@@ -80,7 +84,7 @@ def generate_keypoints(
 
     # Keep only upper body keypoints
     keypoints = keypoints[:, :11, :]
-    if inference: 
+    if inference:
         return keypoints
     keypoints = keypoints[keypoints[:, 0, 0].argsort()]
     return keypoints

@@ -82,7 +82,7 @@ class ConfusionDetectionInference:
             )
             self.face_detector.eval()
             self.face_detector.to(self.device)
-        
+
         if self.model_config.model_type == "keypoints":
             # Intialize Keypoint Featurizer
             self.keypoint_model = keypointrcnn_resnet50_fpn(
@@ -93,8 +93,11 @@ class ConfusionDetectionInference:
 
     def get_list_of_person_bboxes(self, full_image: Image) -> List[Image]:
         people_bboxes = generate_person_bboxes(
-            self.person_detector, full_image, self.tensor_transforms, self.device, 
-            self.thresholds['person']
+            self.person_detector,
+            full_image,
+            self.tensor_transforms,
+            self.device,
+            self.thresholds["person"],
         )
         if not people_bboxes:
             return None
@@ -102,73 +105,81 @@ class ConfusionDetectionInference:
             get_cropped_image(full_image, person_bbox) for person_bbox in people_bboxes
         ]
         return people_images
-    
+
     def get_full_img_tensor(self, image: Image):
         image = image.resize((160, 160))
         return self.tensor_transforms(image)
-    
+
     def get_face_tensor_from_img(self, full_image: Image) -> Optional[torch.Tensor]:
         face_bbox = generate_face_bbox(
-            self.face_detector, full_image, self.tensor_transforms, self.device, 
-            self.thresholds['face']
+            self.face_detector,
+            full_image,
+            self.tensor_transforms,
+            self.device,
+            self.thresholds["face"],
         )
         if len(face_bbox) == 0:
             return None
         face_image = get_cropped_image(full_image, face_bbox)
         face_image = face_image.resize((160, 160))
         return self.tensor_transforms(face_image)
-    
-    def get_relevant_feats(self, person_img: Image) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]: 
+
+    def get_relevant_feats(
+        self, person_img: Image
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         body_feat, face_feat = None, None
         if self.model_config.model_type == "single_body_image":
             body_feat = self.get_full_img_tensor(person_img)
         elif self.model_config.model_type == "single_face_image":
             face_feat = self.get_face_tensor_from_img(person_img)
-        elif self.model_config.model_type == "keypoints": 
+        elif self.model_config.model_type == "keypoints":
             face_feat = self.get_face_tensor_from_img(person_img)
             body_feat = generate_keypoints(
-                            self.keypoint_model,
-                            person_img,
-                            self.tensor_transforms,
-                            device=self.device,
-                            detect_threshold=self.threshold['keypoints'],
-                            inference=True)
-            if len(body_feat) == 0: 
+                self.keypoint_model,
+                person_img,
+                self.tensor_transforms,
+                device=self.device,
+                detect_threshold=self.threshold["keypoints"],
+                inference=True,
+            )
+            if len(body_feat) == 0:
                 body_feat = None
-            else: 
+            else:
                 body_feat = body_feat[0]
-        else: 
+        else:
             face_feat = self.get_face_tensor_from_img(person_img)
             body_feat = self.get_full_img_tensor(person_img)
         return body_feat, face_feat
 
-    def postprocess(self, pred_list: List[float]) -> bool: 
+    def postprocess(self, pred_list: List[float]) -> bool:
         confusion = False
         valence_threshold = 5
         arousal_threshold = 4
         dominance_threshold = 6
-        for pred in pred_list: 
+        for pred in pred_list:
             pred_valence, pred_arousal, pred_dominance = pred
-            if pred_valence < valence_threshold and pred_arousal < arousal_threshold and pred_dominance < dominance_threshold: 
+            if (
+                pred_valence < valence_threshold
+                and pred_arousal < arousal_threshold
+                and pred_dominance < dominance_threshold
+            ):
                 confusion = True
         return confusion
-          
 
-    
-    def run_inference(self, image: Image) -> bool: 
+    def run_inference(self, image: Image) -> bool:
         person_images = self.get_list_of_person_bboxes(image)
-        if person_images is None: 
-            return [10., 10., 10.]
+        if person_images is None:
+            return [10.0, 10.0, 10.0]
         pred_list = []
-        for person in person_images: 
+        for person in person_images:
             body_feat, face_feat = self.get_relevant_feats(person)
             # Get outputs
             if self.model_config.model_type == "single_body_image":
-                if body_feat is None: 
+                if body_feat is None:
                     continue
                 outputs = self.model(body_feat)
             elif self.model_config.model_type == "single_face_image":
-                if face_feat is None: 
+                if face_feat is None:
                     continue
                 outputs = self.model(face_feat)
             else:
@@ -177,12 +188,10 @@ class ConfusionDetectionInference:
                 outputs = self.model(body_feat, face_feat)
             preds = torch.clamp(outputs, 1, 10)
             pred_list.append(preds)
-        if not pred_list: 
+        if not pred_list:
             return 0
-        else: 
+        else:
             return self.postprocess(pred_list)
-
-            
 
 
 if __name__ == "__main__":
